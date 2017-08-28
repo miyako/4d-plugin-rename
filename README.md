@@ -1,5 +1,5 @@
 # 4d-plugin-rename
-Wrapper of standard C rename() function
+Wrapper of standard C [rename](https://msdn.microsoft.com/en-us/library/zw5t957f.aspx) function
 
 ### Platform
 
