@@ -143,8 +143,8 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE="test/Plugins/${{ env.PRODUCT_NAME }}.bundle"
-          rm -rf "$BUNDLE/Contents/Windows64"
-          cp -R "winbuild/test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows64" "$BUNDLE/Contents/"
+          mkdir -p "$BUNDLE/Contents/Windows64"
+          cp "winbuild/${{ env.PRODUCT_NAME }}.4DX" "$BUNDLE/Contents/Windows64/${{ env.PRODUCT_NAME }}.4DX"
           echo "BUNDLE_PATH=$BUNDLE" >> "$GITHUB_ENV"
 
       - name: codesign
