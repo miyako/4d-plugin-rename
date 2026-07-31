@@ -1,6 +1,7 @@
-# Builds the plugin for Windows (Win32 + x64), then macOS, merges both into
-# the single cross-platform .bundle, codesigns + notarizes the mac binary,
-# and publishes a GitHub Release with the zip and dmg attached.
+# Builds the plugin for Windows (x64) first, then macOS as a universal
+# (arm64 + x86_64) binary, merges both into the single cross-platform
+# .bundle, codesigns + notarizes the mac binary, and publishes a GitHub
+# Release with the zip and dmg attached.
 #
 # Trigger: push a tag matching v*.*.* (either by hand, or via bump-version.yml).
 # You can also run it manually against an existing tag with workflow_dispatch.
@@ -47,7 +48,7 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   build-windows:
-    name: Build Windows (Win32 + x64)
+    name: Build Windows (x64)
     needs: version
     runs-on: windows-latest
     steps:
@@ -65,16 +66,11 @@ jobs:
         shell: cmd
         run: msbuild ${{ env.VCX_SOLUTION }} /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
 
-      - name: build Win32
-        shell: cmd
-        run: msbuild ${{ env.VCX_SOLUTION }} /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m
-
       - name: upload windows binaries
         uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
           path: |
-            test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows/${{ env.PRODUCT_NAME }}.4DX
             test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows64/${{ env.PRODUCT_NAME }}.4DX
           if-no-files-found: error
 
@@ -126,19 +122,27 @@ jobs:
             --password "$APP_PASSWORD" \
             --keychain "$KEYCHAIN_PATH"
 
-      - name: build macOS plugin (Release)
+      - name: build macOS plugin (Release, universal)
         run: |
           xcodebuild -project "${{ env.XCODE_PROJECT }}" \
             -target "${{ env.PRODUCT_NAME }}" \
             -configuration Release \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             MACOSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}" \
             clean build
+
+      - name: verify universal binary
+        run: |
+          set -euo pipefail
+          BIN="test/Plugins/Release/${{ env.PRODUCT_NAME }}.bundle/Contents/MacOS/${{ env.PRODUCT_NAME }}"
+          lipo -info "$BIN"
+          lipo -info "$BIN" | grep -q "arm64" && lipo -info "$BIN" | grep -q "x86_64"
 
       - name: merge Windows binaries into the bundle
         run: |
           set -euo pipefail
           BUNDLE="test/Plugins/Release/${{ env.PRODUCT_NAME }}.bundle"
-          cp -R "winbuild/test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows"   "$BUNDLE/Contents/"
           cp -R "winbuild/test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows64" "$BUNDLE/Contents/"
           echo "BUNDLE_PATH=$BUNDLE" >> "$GITHUB_ENV"
 
