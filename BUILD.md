@@ -166,3 +166,75 @@ mocked GitHub APIs and closed-PATH native command stubs, including
 PowerShell when available. Run them on both the live tree and a disposable
 copy after a source bump. These checks do not execute real native builds,
 signing, notarization, 4D, workflow dispatches or production publication.
+
+## Native string ownership regression (non-release)
+
+On macOS, with Apple's existing compiler and frameworks:
+
+```sh
+python3 .github/tests/test_string_ownership.py --output-dir /absolute/path/to/session-artifacts/ownership
+```
+
+The runner compiles the actual JSON, ARRAY_TEXT and C_TEXT helpers, dispatcher,
+C_LONGINT and complete unchanged bundled SDK into a standalone ASan/UBSan
+executable. It does not invoke Xcode/MSBuild, the release scripts, signing,
+packaging, publication or 4D, and writes outputs only in the specified directory.
+`--source-root /path/to/immutable-source-snapshot` runs the same harness against
+an older source revision (the harness itself still comes from the current tree).
+
+The host-boundary shim uses the SDK's real `gCall4D` entry point, not substitute
+implementations of the fixed helpers or SDK setters. All string buffers,
+handles and object/collection/picture references are accounted for; allocated
+and null empty strings are separate runs. macOS LeakSanitizer is disabled;
+explicit zero-live-allocation/reference assertions provide the leak oracle.
+Fourteen cases cover all three string setters, picture initialization,
+owning object-property getters and mismatches, successful collection handoff,
+object/collection setters, independent command results and wrong-kind cleanup,
+scalar input copies, and array borrowed copies/independent transfers,
+replacement/shrink/clear and rejected type/index/null-data destinations.
+ASCII, BMP, supplementary surrogate pairs and empty fixtures assert exact
+content, UTF-16 lengths and terminators after allocator churn. Native
+CoreFoundation performs the byte/code-unit conversions.
+
+### Audit scope and contracts
+
+The audit baseline is `e1565da4b641afd92e46a0eb1f29734e393473a3`.
+Both source and committed bundle manifests declare only `RENAME(&T;&T;&L)`;
+selector 1 calls RENAME. Both native projects compile only the dispatcher,
+C_TEXT, C_LONGINT and SDK. RENAME copies borrowed input strings into independent
+C++ storage before synchronous `rename`/`_wrename`; it returns only an integer.
+No current-command string lifetime defect was confirmed.
+
+Tracked `support/4DPlugin-JSON.cpp`, ARRAY_TEXT and C_BLOB are dormant (neither
+project compiles them). C_BLOB's text conversions use C_TEXT copies; there is no
+CPicture or C_POINTER wrapper in this repository. Bundled third-party jsoncpp
+headers/libraries and committed binaries are not modified or certified.
+
+In the bundled `4DPluginAPI.c` (header `rev : v14`, **not** a verified SDK release
+identity), `PA_CreateVariable(eVK_Unistring)` creates an owned empty string;
+`PA_SetStringVariable` shallowly overwrites it without disposal. The three
+JSON setters now start Undefined before transferring their new string.
+The picture setter similarly avoids allocating an empty picture it would
+overwrite. `PA_GetObjectProperty` explicitly requires the returned variable
+to be cleared: string/bool/number getters now clear after reading/copying,
+including mismatches. The collection getter clears only mismatches and
+preserves its successful owning-reference handoff. Existing synchronous
+stringify argument/result cleanup and successful object/collection setter
+handoffs are preserved.
+
+`PA_GetStringInArray` borrows an element; accepted `PA_SetStringInArray`
+disposes the old element and transfers the supplied descriptor. Rejection
+leaves the caller owning its string. ARRAY_TEXT already copies inputs and
+creates independent strings for outputs; no blanket disposal change is made.
+The normal-array tests do **not** certify allocation failure: the SDK can
+update the element count even after failed growth. That separate failure path
+is deferred, as are undocumented `PA_GetApplicationFullPath` /
+`PA_GetPictureData` return ownership (neither is used by these helpers).
+There are no first-party pointer-metadata or method-callback call sites to
+change. SDK implementation internals are not rewritten.
+
+The same harness fails the immutable baseline on each allocated-empty string
+setter, both picture runs and both getter runs; the fixed source passes all
+14 cases. This is native macOS host-shim evidence, not execution in 4D or
+certification of Windows behavior, historical bundled binaries, a Windows
+crash, or SDK/host allocation-failure behavior.
